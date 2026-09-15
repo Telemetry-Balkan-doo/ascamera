@@ -7,8 +7,11 @@
   <maintainer email="luzhuoyue@angstrong.com">joyo</maintainer>
   <license>GPLv2</license>
 
+  <depend>std_srvs</depend>
+
   <buildtool_depend>ament_cmake</buildtool_depend>
 
+  <test_depend>ament_cmake_gtest</test_depend>
   <test_depend>ament_lint_auto</test_depend>
   <test_depend>ament_lint_common</test_depend>
 

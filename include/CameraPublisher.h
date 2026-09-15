@@ -28,6 +28,7 @@
 #include "rclcpp/node.hpp"
 #include "pcl_conversions/pcl_conversions.h"
 #include "std_msgs/msg/string.hpp"
+#include "std_srvs/srv/trigger.hpp"
 #include "std_msgs/msg/header.hpp"
 #include "sensor_msgs/msg/point_cloud2.hpp"
 #include "sensor_msgs/msg/point_field.hpp"
@@ -152,6 +153,8 @@ private:
     void getSubListStreamType(const PUBLISHER_INFO_S &publisherInfo, unsigned int &type);
 
 private:
+    rclcpp::Service<std_srvs::srv::Trigger>::SharedPtr m_restart_service;
+    void restartStream(std_srvs::srv::Trigger::Response &response);
     std::string m_nodeNameSpace;
     std::map<AS_CAM_PTR, AS_SDK_CAM_MODEL_E> m_cam_type_map;
     std::list<PUBLISHER_INFO_S> imgPubList;

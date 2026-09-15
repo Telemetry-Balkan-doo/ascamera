@@ -26,7 +26,6 @@
 #include "Logger.h"
 #include "as_camera_sdk_api.h"
 #include "common.h"
-#include "CameraPublisher.h"
 #include "CameraSrv.h"
 
 CameraSrv::CameraSrv(ICameraStatus *cameraStatus, const std::string &filepath) : m_camera_status(cameraStatus)
@@ -60,7 +59,7 @@ int CameraSrv::start()
 {
     AS_LISTENER_CALLBACK_S listener_callback;
     listener_callback.onAttached = onAttached;
-    listener_callback.onDetached = onAttached;
+    listener_callback.onDetached = onDetached;
     listener_callback.privateData = this;
 
     AS_SDK_StartListener(listener_callback, AS_LISTENNER_TYPE_USB, true);
@@ -393,4 +392,3 @@ int CameraSrv::scanDir(const std::string &dir, std::vector<std::string> &file)
     closedir(directory);
     return ret;
 }
-

@@ -34,6 +34,7 @@ find_package(ament_cmake REQUIRED)
 # further dependencies manually.
 find_package(rclcpp REQUIRED)
 find_package(std_msgs REQUIRED)
+find_package(std_srvs REQUIRED)
 find_package(sensor_msgs REQUIRED)
 # find_package(pcl_ros REQUIRED)
 find_package(pcl_conversions REQUIRED)
@@ -67,7 +68,7 @@ add_executable(
   src/Camera.cpp
   src/TfTreeFrameIdInfo.cpp
   )
-ament_target_dependencies(ascamera_node rclcpp std_msgs sensor_msgs pcl_conversions geometry_msgs tf2 tf2_ros)
+ament_target_dependencies(ascamera_node rclcpp std_msgs std_srvs sensor_msgs pcl_conversions geometry_msgs tf2 tf2_ros)
 target_link_libraries(ascamera_node
   ${PCL_LIBRARIES}
 )
@@ -98,6 +99,9 @@ install(DIRECTORY launch
   DESTINATION share/${PROJECT_NAME})
 
 if(BUILD_TESTING)
+  find_package(ament_cmake_gtest REQUIRED)
+  ament_add_gtest(test_sdk_stream_restart test/test_sdk_stream_restart.cpp)
+  ament_add_gtest(test_camera_hotplug test/test_camera_hotplug.cpp src/CameraSrv.cpp)
   find_package(ament_lint_auto REQUIRED)
   # the following line skips the linter which checks for copyrights
   # uncomment the line when a copyright and license is not present in all source files

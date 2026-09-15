@@ -11,6 +11,8 @@
  */
 
 #include "CameraPublisher.h"
+#include "SdkStreamRestart.h"
+#include <set>
 
 #define LOG_PARA(value, str)\
     do { \
@@ -26,6 +28,12 @@ CameraPublisher::CameraPublisher()
 {
     initLaunchParams();
     m_nodeNameSpace = get_namespace();
+    m_restart_service = create_service<std_srvs::srv::Trigger>(
+        "~/restart_stream",
+        [this](const std::shared_ptr<std_srvs::srv::Trigger::Request>,
+               std::shared_ptr<std_srvs::srv::Trigger::Response> response) {
+            restartStream(*response);
+        });
 }
 
 CameraPublisher::~CameraPublisher()
@@ -72,6 +80,55 @@ void CameraPublisher::stop()
 
     /* free the map */
     m_camera_map.erase(m_camera_map.begin(), m_camera_map.end());
+}
+
+void CameraPublisher::restartStream(std_srvs::srv::Trigger::Response &response)
+{
+    response.success = false;
+    if (!server) {
+        response.message = "Camera server is not running";
+        return;
+    }
+    std::unique_lock<std::timed_mutex> lock(server->getLock(), std::defer_lock);
+    if (!lock.try_lock_for(std::chrono::milliseconds(500))) {
+        response.message = "Camera SDK is busy";
+        return;
+    }
+    std::set<AS_CAM_PTR> streams;
+    for (const auto &publisher : imgPubList) {
+        if (publisher.camStatus != CAMERA_CLOSED_STATUS && publisher.stream_flg != 0) {
+            streams.insert(publisher.pCamera);
+        }
+    }
+    if (streams.empty()) {
+        response.message = "No open camera streams";
+        return;
+    }
+    for (const auto &camera : streams) {
+        const auto result = restartSdkStream(camera);
+        if (result.stopped) {
+            onCameraStop(camera);
+            for (auto &publisher : imgPubList) {
+                if (publisher.pCamera == camera) {
+                    // HP60C default mode starts depth, RGB and point cloud.
+                    // Keep the controller's flags consistent with that SDK mode.
+                    const auto model = m_cam_type_map.find(camera);
+                    const int default_flags = model != m_cam_type_map.end() && model->second == AS_SDK_CAM_MODEL_HP60C
+                        ? DEPTH_IMG_FLG | RGB_IMG_FLG | POINTCLOUD_IMG_FLG : 0x0fffffff;
+                    publisher.stream_flg = result.success ? default_flags : 0;
+                }
+            }
+        }
+        if (!result.success) {
+            response.message = result.message;
+            RCLCPP_WARN(m_logger, "%s", response.message.c_str());
+            return;
+        }
+        onCameraStart(camera);
+    }
+    response.success = true;
+    response.message = "Camera streams restarted through SDK (default stream type: 0)";
+    RCLCPP_INFO(m_logger, "%s", response.message.c_str());
 }
 
 void CameraPublisher::saveImage()
@@ -130,6 +187,9 @@ int CameraPublisher::onCameraAttached(AS_CAM_PTR pCamera, CamSvrStreamParam_s &p
     }
     logCameraPathInfo(attr_t);
 
+    const int initial_stream_flags = param.image_flag != DEFAULT_IMG_FLG ? param.image_flag
+        : (cam_type == AS_SDK_CAM_MODEL_HP60C ? DEPTH_IMG_FLG | RGB_IMG_FLG | POINTCLOUD_IMG_FLG : 0x0fffffff);
+
     /* create publisher */
     unsigned int imgPubIdx = 0;
     switch (attr_t.type) {
@@ -141,7 +201,8 @@ int CameraPublisher::onCameraAttached(AS_CAM_PTR pCamera, CamSvrStreamParam_s &p
                 param.start = true;
                 it->pCamera = pCamera;
                 memcpy(&it->attr_s, &attr_t, sizeof(AS_CAM_ATTR_S));
-                it->stream_flg = 0;
+                it->stream_flg = initial_stream_flags;
+                it->camStatus = CAMERA_CLOSED_STATUS;
                 reconnected = true;
                 dev_idx = imgPubIdx;
                 break;
@@ -157,7 +218,8 @@ int CameraPublisher::onCameraAttached(AS_CAM_PTR pCamera, CamSvrStreamParam_s &p
                 param.start = true;
                 it->pCamera = pCamera;
                 memcpy(&it->attr_s, &attr_t, sizeof(AS_CAM_ATTR_S));
-                it->stream_flg = 0;
+                it->stream_flg = initial_stream_flags;
+                it->camStatus = CAMERA_CLOSED_STATUS;
                 reconnected = true;
                 dev_idx = imgPubIdx;
                 break;
@@ -291,11 +353,7 @@ int CameraPublisher::onCameraAttached(AS_CAM_PTR pCamera, CamSvrStreamParam_s &p
 
         stPublisherInfo.pCamera = pCamera;
         memcpy(&stPublisherInfo.attr_s, &attr_t, sizeof(AS_CAM_ATTR_S));
-        if (param.image_flag == 0) {
-            stPublisherInfo.stream_flg = 0x0fffffff;
-        } else {
-            stPublisherInfo.stream_flg = param.image_flag;
-        }
+        stPublisherInfo.stream_flg = initial_stream_flags;
         stPublisherInfo.camStatus = CAMERA_CLOSED_STATUS;
         imgPubList.push_back(stPublisherInfo);
     }
@@ -323,6 +381,15 @@ int CameraPublisher::onCameraDetached(AS_CAM_PTR pCamera)
     int ret = 0;
 
     RCLCPP_INFO_STREAM(m_logger, "camera detached");
+    for (auto &publisher : imgPubList) {
+        if (publisher.pCamera == pCamera) {
+            // Preserve the publishers and USB port identity for reconnect,
+            // but never pass the destroyed SDK handle to the stream controller.
+            publisher.camStatus = CAMERA_CLOSED_STATUS;
+            publisher.stream_flg = 0;
+            publisher.pCamera = nullptr;
+        }
+    }
     auto camIt = m_camera_map.find(pCamera);
     if (camIt != m_camera_map.end()) {
         m_camera_map.erase(pCamera);
@@ -1539,6 +1606,9 @@ int CameraPublisher::streamController()
     while (rclcpp::ok()) {
         server->getLock().lock();
         for (auto it = imgPubList.begin(); it != imgPubList.end(); it++) {
+            if (it->pCamera == nullptr || it->camStatus == CAMERA_CLOSED_STATUS) {
+                continue;
+            }
             unsigned int type = 0;
             getSubListStreamType(*it, type);
 
