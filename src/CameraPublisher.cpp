@@ -1609,6 +1609,7 @@ int CameraPublisher::streamController()
             if (it->pCamera == nullptr || it->camStatus == CAMERA_CLOSED_STATUS) {
                 continue;
             }
+
             unsigned int type = 0;
             getSubListStreamType(*it, type);
 
